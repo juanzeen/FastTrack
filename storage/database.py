@@ -19,6 +19,7 @@ cur.execute('''
             CREATE TABLE IF NOT EXISTS peers (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 peer_name VARCHAR(255) NOT NULL UNIQUE,
+                email VARCHAR(255) NOT NULL UNIQUE,
                 ip_address VARCHAR(45) NOT NULL,
                 port INTEGER NOT NULL,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
