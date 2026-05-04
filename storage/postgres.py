@@ -184,7 +184,7 @@ def get_all_peers():
 
         if not rows:
             logger.warning(f"Nenhum peer foi encontrado")
-            return None
+            return []
  
         return [dict(row) for row in rows]
  
@@ -211,7 +211,7 @@ def get_active_peers():
 
         if not rows:
             logger.warning(f"Nenhum peer ativo foi encontrado")
-            return None
+            return []
  
         return [dict(row) for row in rows]
  
@@ -245,7 +245,7 @@ def insert_shared_file(peer_name, filename, filepath,
         existing = cur.fetchone()
         if existing:
             logger.warning(f"Arquivo '{filename}' já está sendo compartilhado.")
-            return "file_already_shared"
+            return False
  
         cur.execute('''
             INSERT INTO shared_files (peer_id, filename, filepath, size_bytes, checksum)
@@ -420,7 +420,7 @@ def get_downloads_by_status(status):
 
         if status not in ('downloading', 'completed', 'failed', 'canceled'):
             logger.warning(f"Status '{status}' de download não existente")
-            return False
+            return []
 
         cur.execute('''
             SELECT id, filename, checksum, source_peer_name,

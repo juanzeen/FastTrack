@@ -12,7 +12,7 @@ PEER_TTL = int(os.getenv('REDIS_PEER_TTL', 30))
 def get_redis():
     return redis.Redis(
         host='localhost',
-        port=os.getenv('REDIS_PORT'),
+        port=int(os.getenv('REDIS_PORT', 6379)),
         db=0,
         decode_responses=True
     )
@@ -105,6 +105,7 @@ def remove_peer(peer_name):
         for checksum in checksums:
             if r.scard(f"file:{checksum}:peers") == 0:
                 r.delete(f"file:{checksum}:meta")
+                r.delete(f"file:{checksum}:peers")
  
         logger.info(f"Peer '{peer_name}' removido do Redis.")
         return True
@@ -116,30 +117,40 @@ def remove_peer(peer_name):
 def register_peer_files(peer_name, files):
     try:
         r = get_redis()
+
+        novos_checksums = {f["checksum"] for f in files}
+        checksums_antigos = r.smembers(f"peer:{peer_name}:files")
+        removidos = checksums_antigos - novos_checksums
+
         pipe = r.pipeline()
- 
+
+        for checksum in removidos:
+            pipe.srem(f"peer:{peer_name}:files", checksum)
+            pipe.srem(f"file:{checksum}:peers", peer_name)
+
         for file in files:
-            checksum  = file["checksum"]
-            filename  = file["filename"]
+            checksum   = file["checksum"]
+            filename   = file["filename"]
             size_bytes = file["size_bytes"]
- 
+
             pipe.sadd(f"peer:{peer_name}:files", checksum)
- 
             pipe.hset(f"file:{checksum}:meta", mapping={
                 "filename":   filename,
                 "size_bytes": size_bytes
             })
- 
             pipe.sadd(f"file:{checksum}:peers", peer_name)
- 
             pipe.expire(f"file:{checksum}:meta", PEER_TTL)
- 
+
         pipe.expire(f"peer:{peer_name}:files", PEER_TTL)
- 
         pipe.execute()
-        logger.info(f"Arquivos do peer '{peer_name}' registrados no Redis ({len(files)} arquivo(s)).")
+
+        for checksum in removidos:
+            if r.scard(f"file:{checksum}:peers") == 0:
+                r.delete(f"file:{checksum}:meta")
+
+        logger.info(f"Arquivos do peer '{peer_name}' sincronizados ({len(files)} arquivo(s), {len(removidos)} removido(s)).")
         return True
- 
+
     except Exception as e:
         logger.error(f"Erro ao registrar arquivos do peer '{peer_name}': {e}")
         return False
@@ -148,8 +159,22 @@ def get_peers_with_file(checksum):
     try:
         r = get_redis()
         peers = r.smembers(f"file:{checksum}:peers")
-        return list(peers)
- 
+
+        peers_ativos = [
+            p for p in peers
+            if r.exists(f"peer:{p}:info")
+        ]
+
+        zumbis = peers - set(peers_ativos)
+        if zumbis:
+            pipe = r.pipeline()
+            for zumbi in zumbis:
+                pipe.srem(f"file:{checksum}:peers", zumbi)
+            pipe.execute()
+            logger.info(f"Removidos {len(zumbis)} peer(s) zumbi(s) do arquivo '{checksum}'.")
+
+        return peers_ativos
+
     except Exception as e:
         logger.error(f"Erro ao buscar peers com arquivo '{checksum}': {e}")
         return []
