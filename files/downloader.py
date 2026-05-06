@@ -29,10 +29,14 @@ def verify_checksum(filepath, expected_checksum):
 
 def download_file(peer_name, ip_address, port, checksum, filename):
     if not DOWNLOAD_FOLDER.exists():
-        logger.warning(f"Pasta compartilhada '{DOWNLOAD_FOLDER}' não existe. Criando...")
+        logger.warning(f"Pasta de download '{DOWNLOAD_FOLDER}' não existe. Criando...")
         DOWNLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
-    filepath = DOWNLOAD_FOLDER / filename
+    try:
+        filepath = _build_safe_download_path(filename)
+    except ValueError as e:
+        logger.error(f"Nome de arquivo inválido para download '{filename}': {e}")
+        return 'failed'
 
     download_id = insert_download(filename, checksum, peer_name, ip_address)
     if not download_id:
@@ -133,15 +137,25 @@ def download_file(peer_name, ip_address, port, checksum, filename):
             sock.close()
 
 def _receive_line(sock):
-    linha = b''
+    buffer = bytearray()
+    max_bytes = 4096
+
     try:
-        while True:
+        while len(buffer) < max_bytes:
             char = sock.recv(1)
             if not char:
                 return None
             if char == b'\n':
-                return linha.decode('utf-8').strip()
-            linha += char
+                return buffer.decode('utf-8').strip()
+            buffer += char
+
+        logger.error(
+            f"Header excedeu limite de {max_bytes} bytes sem delimitador. "
+            f"Possível peer malicioso — conexão abortada."
+        )
+        
+        return None
+
     except Exception:
         return None
 
@@ -153,3 +167,22 @@ def _delete_incomplete_file(filepath):
             logger.info(f"Arquivo incompleto '{filepath.name}' removido.")
     except OSError as e:
         logger.error(f"Erro ao remover arquivo incompleto '{filepath}': {e}")
+        
+def _build_safe_download_path(filename):
+    candidate = Path(filename)
+
+    if candidate.is_absolute():
+        raise ValueError("Nome de arquivo absoluto não é permitido.")
+    
+    if candidate.name != filename or candidate.name in ('', '.', '..'):
+        raise ValueError("Nome de arquivo inválido.")
+    
+    base_dir = DOWNLOAD_FOLDER.resolve()
+    filepath = (base_dir / candidate.name).resolve()
+
+    try:
+        filepath.relative_to(base_dir)
+    except ValueError:
+        raise ValueError("Caminho de destino fora da pasta de download.")
+    
+    return filepath

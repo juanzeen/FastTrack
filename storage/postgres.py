@@ -304,6 +304,28 @@ def get_shared_files_by_checksum(checksum):
         cur.close()
         conn.close()
 
+def update_shared_file(checksum, peer_name, filename, filepath, size_bytes):
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+
+        cur.execute('''
+            UPDATE shared_files
+            SET filename   = %s, filepath   = %s, size_bytes = %s
+            WHERE checksum = %s
+              AND peer_id  = (SELECT id FROM peers WHERE peer_name = %s);
+        ''', (filename, filepath, size_bytes, checksum, peer_name))
+
+        conn.commit()
+        return True
+
+    except Exception as e:
+        logger.error(f"Erro ao atualizar arquivo '{checksum}': {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
 def delete_shared_file(checksum, peer_name):
     try:
         conn = get_connection()

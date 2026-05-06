@@ -3,7 +3,7 @@ import hashlib
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
-from storage.postgres import insert_shared_file, get_shared_files_by_peer, delete_shared_file, get_shared_files_by_checksum
+from storage.postgres import insert_shared_file, get_shared_files_by_peer, delete_shared_file, get_shared_files_by_checksum, update_shared_file
 
 
 load_dotenv()
@@ -54,14 +54,19 @@ def sync_shared_files(peer_name):
     arquivos_disco = scan_shared_folder()
     arquivos_banco = get_shared_files_by_peer(peer_name)
 
-    checksums_disco = {f['checksum'] for f in arquivos_disco}
-    checksums_banco = {f['checksum'] for f in arquivos_banco}
+    banco_por_checksum = {f['checksum']: f for f in arquivos_banco}
+    checksums_disco    = {f['checksum'] for f in arquivos_disco}
+    checksums_banco    = set(banco_por_checksum.keys())
 
-    novos = [f for f in arquivos_disco if f['checksum'] not in checksums_banco]
-
+    novos    = [f for f in arquivos_disco if f['checksum'] not in checksums_banco]
     removidos = checksums_banco - checksums_disco
 
+    em_comum = [f for f in arquivos_disco if f['checksum'] in checksums_banco]
+
     inserted = 0
+    updated  = 0
+    deleted  = 0
+
     for arquivo in novos:
         ok = insert_shared_file(
             peer_name,
@@ -73,25 +78,39 @@ def sync_shared_files(peer_name):
         if ok:
             inserted += 1
 
-    deleted = 0
+    for arquivo in em_comum:
+        no_banco = banco_por_checksum[arquivo['checksum']]
+
+        if (arquivo['filename'] != no_banco['filename'] or
+                arquivo['filepath'] != no_banco['filepath']):
+
+            ok = update_shared_file(
+                checksum=arquivo['checksum'],
+                peer_name=peer_name,
+                filename=arquivo['filename'],
+                filepath=arquivo['filepath'],
+                size_bytes=arquivo['size_bytes']
+            )
+            if ok:
+                updated += 1
+                logger.info(
+                    f"Arquivo renomeado/movido: "
+                    f"'{no_banco['filename']}' para '{arquivo['filename']}'"
+                )
+
     for checksum in removidos:
         ok = delete_shared_file(checksum, peer_name)
         if ok:
             deleted += 1
 
-    total = len(checksums_disco)
-
     logger.info(
         f"Sync concluído para '{peer_name}': "
-        f"+{inserted} inserido(s), -{deleted} removido(s), "
-        f"{total} total."
+        f"+{inserted} inserido(s), ~{updated} atualizado(s), "
+        f"-{deleted} removido(s)."
     )
 
-    return {
-        'inserted': inserted,
-        'deleted':  deleted,
-        'total':    total
-    }
+    return {'inserted': inserted, 'updated': updated,
+            'deleted': deleted, 'total': len(checksums_disco)}
 
 def get_file_for_download(checksum, peer_name):
     resultados = get_shared_files_by_checksum(checksum)
