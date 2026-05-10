@@ -45,12 +45,12 @@ class Message:
         if self.type not in ALLOWED_MESSAGE_TYPES:
             raise ValueError(f"Mensagem do tipo {self.type} não é válida.")
 
-    def to_json(self) -> str:
+    def serialize(self) -> str:
         dct = asdict(self)
         return json.dumps(dct)
 
     @staticmethod
-    def from_json(json_str: str) -> 'Message':
+    def desserialize(json_str: str) -> 'Message':
         data = json.loads(json_str)
         return Message(
             type=data["type"],
