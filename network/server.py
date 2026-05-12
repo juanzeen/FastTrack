@@ -7,25 +7,22 @@ from datetime import datetime
 from dotenv import load_dotenv
 from network.protocol import Message, UserMessageType, PeerMessageType, FileMessageType, SystemMessageType
 from storage import postgres
+from storage import redis
 
 # Nota: Certifique-se de que a biblioteca 'websockets' está instalada no seu ambiente.
 try:
     from websockets import serve
 except ImportError:
     print("Erro: A biblioteca 'websockets' não foi encontrada. Instale-a com: pip install websockets")
-    # Não interrompemos o fluxo aqui para permitir que o agente continue a gerar o código solicitado.
 
 
-# Carrega variáveis de ambiente
 load_dotenv()
 
-# Configuração de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("FastTrackServer")
 
 class FastTrackServer:
     def __init__(self):
-        # Mapeamento de Handlers para os tipos de mensagens do protocolo
         self.handlers = {
             UserMessageType.REGISTER_REQUEST.value: self.handle_register,
             UserMessageType.LOGIN_REQUEST.value: self.handle_login,
@@ -34,6 +31,8 @@ class FastTrackServer:
             FileMessageType.FILE_UPLOAD_REQUEST.value: self.handle_file_upload,
             FileMessageType.LIST_SHARED_FILES_REQUEST.value: self.handle_list_shared_files,
             FileMessageType.LIST_KNOWN_FILES_REQUEST.value: self.handle_list_known_files,
+            FileMessageType.SEARCH_FILES_REQUEST.value: self.handle_search_files,
+            FileMessageType.GET_FILE_SOURCES_REQUEST.value: self.handle_get_file_sources,
             SystemMessageType.HEARTBEAT.value: self.handle_heartbeat,
         }
 
@@ -157,8 +156,36 @@ class FastTrackServer:
         await self.send_response(websocket, FileMessageType.LIST_SHARED_FILES_RESPONSE, {"files": files}, message.message_id)
 
     async def handle_list_known_files(self, websocket, message):
-        # Placeholder para busca global de arquivos
-        await self.send_response(websocket, FileMessageType.LIST_KNOWN_FILES_RESPONSE, {"files": [], "info": "Busca global não implementada."}, message.message_id)
+        peer_name = message.payload.get('peer_name')
+        if peer_name:
+            kf = redis.get_peer_files(peer_name)
+            await self.send_response(websocket, FileMessageType.LIST_KNOWN_FILES_RESPONSE, {"files": kf}, message.message_id)
+        else:
+            await self.send_error(websocket, FileMessageType.LIST_KNOWN_FILES_RESPONSE, {"files": [], "info": "Erro ao tentar listar arquivos conhecidos."}, message.message_id)
+
+    async def handle_search_files(self, websocket, message):
+        filename = message.payload.get('query')
+        if not filename:
+            await self.send_error(websocket, "Query de busca vazia.", message.message_id)
+            return
+        
+        results = redis.search_file_by_name(filename)
+        await self.send_response(websocket, FileMessageType.SEARCH_FILES_RESPONSE, {"results": results}, message.message_id)
+
+    async def handle_get_file_sources(self, websocket, message):
+        checksum = message.payload.get('checksum')
+        if not checksum:
+            await self.send_error(websocket, "Checksum não fornecido.", message.message_id)
+            return
+
+        peer_names = redis.get_peers_with_file(checksum)
+        sources = []
+        for name in peer_names:
+            info = redis.get_peer_info(name)
+            if info:
+                sources.append(info)
+        
+        await self.send_response(websocket, FileMessageType.GET_FILE_SOURCES_RESPONSE, {"checksum": checksum, "sources": sources}, message.message_id)
 
     async def handle_heartbeat(self, websocket, message):
         await self.send_response(websocket, SystemMessageType.HEARTBEAT, {"status": "alive", "server_time": datetime.now().isoformat()}, message.message_id)
