@@ -1,26 +1,12 @@
 services:
-  mini_fasttrack_db:
-    container_name: mini_fasttrack_db
-    image: postgres:17-alpine
-    restart: always
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-    - "${POSTGRES_PORT}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-  mini_fasttrack_redis:
-    container_name: mini_fasttrack_redis
-    image: redis:7.4-alpine
-    restart: always
-    ports:
-    - "${REDIS_PORT}:6379"
-    volumes:
-      - redis_data:/data
-
+  mini_fasttrack2_redis:
+      container_name: mini_fasttrack2_redis
+      image: redis:7.4-alpine
+      restart: always
+      ports:
+      - "${REDIS_PORT}:6379"
+      volumes:
+        - redis_data:/data
+  
 volumes:
-    postgres_data:
-
-    redis_data:
+  redis_data:
