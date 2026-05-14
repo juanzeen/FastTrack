@@ -8,21 +8,16 @@ logger = logging.getLogger(__name__)
 
 
 def join_network(state) -> bool:
-    """
-    Processo completo de entrada na rede.
-    Tenta cada IP da bootstrap list até encontrar alguém.
-
-    Retorna True se entrou na rede, False se ficou isolado.
-    """
     if not config.BOOTSTRAP_PEERS:
-        logger.warning("Bootstrap list vazia. Iniciando como primeiro peer da rede.")
+        logger.warning("Bootstrap list vazia. Tentando descoberta local...")
+        if _discover_local_peers(state):
+            return True
+        logger.warning("Nenhum peer encontrado localmente. Iniciando como primeiro peer da rede.")
         _become_first_leader(state)
         return True
 
-    # tenta cada peer da bootstrap list
     for ip, port in config.BOOTSTRAP_PEERS:
 
-        # pula a si mesmo
         if ip == state.ip_address and port == state.port:
             continue
 
@@ -33,7 +28,6 @@ def join_network(state) -> bool:
             logger.warning(f"{ip}:{port} não respondeu.")
             continue
 
-        # eleição em andamento — aguarda e tenta de novo
         if resp.get('election_in_progress'):
             logger.info("Eleição em andamento na rede. Aguardando...")
             time.sleep(config.ELECTION_TIMEOUT)
@@ -45,21 +39,17 @@ def join_network(state) -> bool:
             logger.warning(f"{ip}:{port} não conhece líder. Tentando próximo...")
             continue
 
-        # encontrou o líder — anuncia presença
         logger.info(f"Líder encontrado: {leader['peer_name']} ({leader['ip_address']}:{leader['port']})")
         success = _announce_to_leader(state, leader)
 
         if success:
             return True
 
-    # nenhum peer da bootstrap list respondeu com líder
-    # verifica se algum peer está vivo mas sem líder
     for ip, port in config.BOOTSTRAP_PEERS:
         if ip == state.ip_address and port == state.port:
             continue
         resp = client.who_is_leader(ip, port)
         if resp:
-            # alguém está vivo mas sem líder — inicia eleição
             logger.info("Peers ativos sem líder. Iniciando eleição.")
             state.add_known_peer({
                 'peer_name':  resp.get('peer_name', f'{ip}:{port}'),
@@ -71,17 +61,47 @@ def join_network(state) -> bool:
             start_election(state)
             return True
 
-    # absolutamente ninguém respondeu — primeiro da rede
     logger.info("Nenhum peer respondeu. Iniciando como primeiro peer.")
     _become_first_leader(state)
     return True
 
 
+def _discover_local_peers(state) -> bool:
+    ports_to_try = range(5000, 5010)
+    ips_to_try = ['127.0.0.1', '::1', state.ip_address]
+    
+    for port in ports_to_try:
+        if port == state.port:
+            continue
+        
+        for ip in ips_to_try:
+            logger.debug(f"Tentando descoberta local em {ip}:{port}...")
+            resp = client.who_is_leader(ip, port)
+            
+            if resp:
+                logger.info(f"Peer descoberto localmente em {ip}:{port}")
+                leader = resp.get('leader')
+                
+                if leader and leader['peer_name'] != state.peer_name:
+                    success = _announce_to_leader(state, leader)
+                    if success:
+                        return True
+                elif resp.get('peer_name') and resp['peer_name'] != state.peer_name:
+                    logger.info("Peer ativo encontrado, iniciando eleição.")
+                    state.add_known_peer({
+                        'peer_name': resp.get('peer_name'),
+                        'ip_address': ip,
+                        'port': port,
+                        'uptime': resp.get('uptime', 0)
+                    })
+                    from discovery.election import start_election
+                    start_election(state)
+                    return True
+    
+    return False
+
+
 def _announce_to_leader(state, leader: dict) -> bool:
-    """
-    Anuncia presença ao super nó com lista de arquivos.
-    Recebe de volta a lista de peers conhecidos.
-    """
     files = scan_shared_folder()
     to_announce = [
         {'filename': f['filename'],
@@ -104,15 +124,19 @@ def _announce_to_leader(state, leader: dict) -> bool:
         logger.error(f"Sem resposta do líder '{leader['peer_name']}' ao anúncio.")
         return False
 
-    # líder respondeu com lista de peers
     if resp.get('type') == 'PEER_LIST':
         peers = resp.get('peers', [])
         state.update_known_peers(peers)
         state.current_leader = leader
+        
+        config.add_to_bootstrap(leader['ip_address'], leader['port'])
+        
+        for peer in peers:
+            config.add_to_bootstrap(peer['ip_address'], peer['port'])
+        
         logger.info(f"Entrou na rede. {len(peers)} peer(s) conhecido(s).")
         return True
 
-    # peer não era o líder — ele nos redirecionou
     if resp.get('type') == 'LEADER_INFO':
         new_leader = resp.get('leader')
         if new_leader:
@@ -122,9 +146,9 @@ def _announce_to_leader(state, leader: dict) -> bool:
 
 
 def _become_first_leader(state):
-    """Primeiro peer da rede se declara líder imediatamente."""
-    from storage.redis_store import init_redis
-    init_redis()
+    from storage.dict_store import init_store, register_peer
+    init_store()
+    register_peer(state.peer_name, state.ip_address, state.port, state.uptime)
     state.is_leader            = True
     state.election_in_progress = False
     state.current_leader       = state.to_dict()

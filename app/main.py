@@ -59,15 +59,6 @@ def main():
                 )
             )
 
-        # se sou o líder, limpa Redis
-        if state.is_leader:
-            from storage.redis_store import get_redis
-            try:
-                get_redis().flushdb()
-                logger.info("Redis limpo.")
-            except Exception:
-                pass
-
         sys.exit(0)
 
     signal.signal(signal.SIGINT,  shutdown)

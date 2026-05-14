@@ -14,6 +14,7 @@ ERROR            = 'ERROR'
 # descoberta
 ANNOUNCE         = 'ANNOUNCE'       # peer anuncia presença + arquivos
 PEER_LIST        = 'PEER_LIST'      # resposta com peers conhecidos
+GET_PEERS        = 'GET_PEERS'      # request para pedir lista de peers
 FILE_INDEX       = 'FILE_INDEX'     # super nó pede lista de arquivos
 FILE_INDEX_RESP  = 'FILE_INDEX_RESP'
 
@@ -26,7 +27,7 @@ ALLOWED = {
     ELECTION, ELECTION_OK, LEADER,
     HEARTBEAT, HEARTBEAT_ACK,
     ERROR,
-    ANNOUNCE, PEER_LIST,
+    ANNOUNCE, PEER_LIST, GET_PEERS,
     FILE_INDEX, FILE_INDEX_RESP,
     DOWNLOAD_REQ, FILE_DATA,
 }

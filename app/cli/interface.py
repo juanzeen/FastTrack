@@ -20,7 +20,6 @@ def _get_my_ip() -> str:
 
 
 def run(state):
-    """Loop principal da CLI."""
     print(f"\n{'='*50}")
     print(f"  Mini FastTrack — {state.peer_name}")
     print(f"  IP: {state.ip_address}  Porta: {state.port}")
@@ -71,8 +70,6 @@ def run(state):
             print(f"Comando desconhecido: '{command}'. Digite 'help'.")
 
 
-# ── comandos ──────────────────────────────────────────────────
-
 def _cmd_help():
     print()
     print("  peers                    → lista peers ativos na rede")
@@ -91,21 +88,21 @@ def _cmd_peers(state):
         print("Sem líder conhecido no momento.")
         return
 
-    # pede lista de peers ao super nó
+    from network import protocol as proto
     resp = client.send_and_receive(
         leader['ip_address'],
         leader['port'],
-        __import__('network.protocol', fromlist=['protocol']).build(
-            'PEER_LIST'
-        )
+        proto.build(proto.GET_PEERS)
     )
 
-    # fallback — usa lista local em memória
     peers = []
     if resp and resp.get('type') == 'PEER_LIST':
         peers = resp.get('peers', [])
     else:
         peers = state.known_peers
+
+    if not peers and leader:
+        peers = [leader]
 
     if not peers:
         print("Nenhum peer ativo encontrado.")
@@ -138,8 +135,7 @@ def _cmd_files(state, args):
         )
         files = resp.get('files', []) if resp else []
     else:
-        # lista todos os arquivos conhecidos no super nó
-        from storage.redis_store import search_file_by_name
+        from storage.dict_store import search_file_by_name
         if state.is_leader:
             files = search_file_by_name('')
         else:
@@ -166,10 +162,9 @@ def _cmd_search(state, args):
         return
 
     if state.is_leader:
-        from storage.redis_store import search_file_by_name
+        from storage.dict_store import search_file_by_name
         results = search_file_by_name(query)
     else:
-        # envia busca ao super nó
         from network import protocol as proto
         resp = client.send_and_receive(
             leader['ip_address'],
@@ -207,9 +202,8 @@ def _cmd_download(state, args):
         print("Sem líder conhecido.")
         return
 
-    # descobre quem tem o arquivo
     if state.is_leader:
-        from storage.redis_store import get_peers_with_file
+        from storage.dict_store import get_peers_with_file
         sources = get_peers_with_file(checksum)
     else:
         from network import protocol as proto
@@ -224,10 +218,9 @@ def _cmd_download(state, args):
         print(f"Nenhum peer tem o arquivo com checksum '{checksum[:16]}...'")
         return
 
-    # tenta baixar do primeiro peer disponível
     for source in sources:
         if source['peer_name'] == state.peer_name:
-            continue  # pula a si mesmo
+            continue
 
         print(f"Baixando de '{source['peer_name']}'...")
         status = client.download_file(
@@ -279,8 +272,6 @@ def _cmd_status(state):
     print(f"  Peers conhecidos: {len(state.known_peers)}")
     print()
 
-
-# ── helpers ───────────────────────────────────────────────────
 
 def _format_size(size_bytes: int) -> str:
     if size_bytes < 1024:
