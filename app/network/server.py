@@ -93,6 +93,9 @@ class PeerServer:
             elif t == proto.DOWNLOAD_REQ:
                 self._handle_download(conn, msg)
 
+            elif t == proto.GET_PEERS:
+                self._handle_get_peers(conn)
+
             else:
                 conn.sendall(proto.build(proto.ERROR, reason='unsupported_message_type'))
 
@@ -130,8 +133,8 @@ class PeerServer:
         uptime     = msg.get('uptime', 0)
         files      = msg.get('files', [])
 
-        # registra no Redis
-        from storage.redis_store import register_peer, register_peer_files
+        # registra no storage em memória
+        from storage.dict_store import register_peer, register_peer_files
         register_peer(peer_name, ip_address, port, uptime)
         register_peer_files(peer_name, files)
 
@@ -142,16 +145,16 @@ class PeerServer:
             'port':       port,
             'uptime':     uptime
         })
+        
+        # Adiciona o novo peer à bootstrap list
+        config.add_to_bootstrap(ip_address, port)
 
         # responde com lista de peers ativos
-        from storage.redis_store import get_all_peers
+        from storage.dict_store import get_all_peers
         peers = get_all_peers()
         conn.sendall(proto.build(proto.PEER_LIST, peers=peers))
 
     def _handle_file_index(self, conn):
-        """
-        Novo super nó pede lista de arquivos para reconstruir Redis.
-        """
         files = scan_shared_folder()
         to_announce = [
             {'filename': f['filename'],
@@ -160,6 +163,22 @@ class PeerServer:
             for f in files
         ]
         conn.sendall(proto.build(proto.FILE_INDEX_RESP, files=to_announce))
+
+    def _handle_get_peers(self, conn):
+        peers = []
+        if self.state.is_leader:
+            from storage.dict_store import get_all_peers
+            peers = get_all_peers()
+            if not any(p['peer_name'] == self.state.peer_name for p in peers):
+                peers.append(self.state.to_dict())
+        else:
+            peers = self.state.known_peers
+            if self.state.current_leader and all(
+                p['peer_name'] != self.state.current_leader['peer_name']
+                for p in peers
+            ):
+                peers.append(self.state.current_leader)
+        conn.sendall(proto.build(proto.PEER_LIST, peers=peers))
 
     def _handle_election(self, conn, msg):
         """

@@ -77,9 +77,11 @@ def _declare_leader(state):
     state.election_in_progress = False
     state.current_leader       = state.to_dict()
 
-    # inicializa Redis local como super nó
-    from storage.redis_store import init_redis
-    init_redis()
+    # inicializa storage local como super nó
+    from storage.dict_store import init_store, register_peer
+    init_store()
+    # Registra a si mesmo no dict_store
+    register_peer(state.peer_name, state.ip_address, state.port, state.uptime)
 
     # notifica todos os peers conhecidos
     client.broadcast_leader(
@@ -96,9 +98,9 @@ def _declare_leader(state):
 def _rebuild_index(state):
     """
     Novo super nó pede FILE_INDEX para todos os peers conhecidos
-    e reconstrói o Redis do zero.
+    e reconstrói o storage do zero.
     """
-    from storage.redis_store import register_peer, register_peer_files
+    from storage.dict_store import register_peer, register_peer_files
 
     logger.info("Reconstruindo índice da rede...")
     peers = state.known_peers

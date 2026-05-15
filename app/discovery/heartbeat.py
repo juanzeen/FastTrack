@@ -8,12 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class HeartbeatService:
-    """
-    Roda em thread separada e monitora continuamente:
-    1. O super nó atual — se cair, inicia eleição
-    2. Renova TTL no Redis se este peer for o super nó
-    """
-
     def __init__(self, state):
         self.state    = state
         self._running = False
@@ -37,9 +31,8 @@ class HeartbeatService:
                 logger.error(f"Erro no heartbeat: {e}")
 
     def _tick(self):
-        # se sou o líder, apenas renovo TTLs no Redis
         if self.state.is_leader:
-            self._renew_redis_ttls()
+            self._renew_peer_ttls()
             return
 
         # se não sou o líder, verifico se o líder está vivo
@@ -69,10 +62,10 @@ class HeartbeatService:
             daemon=True
         ).start()
 
-    def _renew_redis_ttls(self):
+    def _renew_peer_ttls(self):
         """
-        Renova TTL de todos os peers ativos no Redis.
+        Renova TTL de todos os peers ativos no storage.
         Chamado pelo super nó a cada ciclo de heartbeat.
         """
-        from storage.redis_store import refresh_all_ttls
+        from storage.dict_store import refresh_all_ttls
         refresh_all_ttls()

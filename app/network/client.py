@@ -65,10 +65,6 @@ def announce(leader_ip: str, leader_port: int,
 
 
 def request_file_index(ip: str, port: int) -> list:
-    """
-    Pede lista de arquivos a um peer.
-    Usado pelo novo super nó para reconstruir o Redis.
-    """
     resp = send_and_receive(ip, port, proto.build(proto.FILE_INDEX))
     if resp and resp.get('type') == proto.FILE_INDEX_RESP:
         return resp.get('files', [])
