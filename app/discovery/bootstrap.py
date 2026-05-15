@@ -152,7 +152,6 @@ def _become_first_leader(state):
     init_store()
     register_peer(state.peer_name, state.ip_address, state.port, state.uptime)
     
-    # Registra os arquivos locais do próprio líder no store
     files = scan_shared_folder()
     to_announce = [
         {'filename': f['filename'],

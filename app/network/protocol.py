@@ -1,4 +1,8 @@
 import json
+import logging
+from exceptions import ProtocolError
+
+logger = logging.getLogger(__name__)
 
 # ── tipos de mensagem ─────────────────────────────────────────
 # sistema
@@ -12,15 +16,15 @@ HEARTBEAT_ACK    = 'HEARTBEAT_ACK'
 ERROR            = 'ERROR'
 
 # descoberta
-ANNOUNCE         = 'ANNOUNCE'       # peer anuncia presença + arquivos
-PEER_LIST        = 'PEER_LIST'      # resposta com peers conhecidos
-GET_PEERS        = 'GET_PEERS'      # request para pedir lista de peers
-FILE_INDEX       = 'FILE_INDEX'     # super nó pede lista de arquivos
+ANNOUNCE         = 'ANNOUNCE'
+PEER_LIST        = 'PEER_LIST'
+GET_PEERS        = 'GET_PEERS'
+FILE_INDEX       = 'FILE_INDEX'
 FILE_INDEX_RESP  = 'FILE_INDEX_RESP'
 
 # download
 DOWNLOAD_REQ     = 'DOWNLOAD_REQ'
-FILE_DATA        = 'FILE_DATA'      # header antes dos bytes binários
+FILE_DATA        = 'FILE_DATA'
 SEARCH_FILES_REQUEST = 'SEARCH_FILES_REQUEST'
 SEARCH_FILES_RESPONSE = 'SEARCH_FILES_RESPONSE'
 GET_FILE_SOURCES_REQUEST = 'GET_FILE_SOURCES_REQUEST'
@@ -40,35 +44,40 @@ ALLOWED = {
 
 # ── delimitador de mensagem ───────────────────────────────────
 DELIMITER = b'\n'
-MAX_HEADER = 4096  # bytes — proteção contra headers maliciosos
+MAX_HEADER = 4096
 
 
 # ── build helpers ─────────────────────────────────────────────
 
 def build(msg_type: str, **kwargs) -> bytes:
-    """Serializa mensagem para bytes prontos para envio."""
-    assert msg_type in ALLOWED, f"Tipo inválido: {msg_type}"
-    msg = {'type': msg_type, **kwargs}
-    return json.dumps(msg).encode('utf-8') + DELIMITER
+    if msg_type not in ALLOWED:
+        raise ProtocolError(f"Tipo de mensagem inválido para build: {msg_type}")
+
+    try:
+        msg = {'type': msg_type, **kwargs}
+        return json.dumps(msg).encode('utf-8') + DELIMITER
+    except (TypeError, ValueError) as e:
+        raise ProtocolError(f"Erro ao serializar mensagem {msg_type}: {e}")
 
 
 def parse(raw: str) -> dict:
-    """Desserializa string JSON recebida."""
-    msg = json.loads(raw)
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ProtocolError(f"Erro ao decodificar JSON: {e}")
+
+    if not isinstance(msg, dict):
+        raise ProtocolError(f"Mensagem inválida (não é um dicionário): {type(msg)}")
+
     if msg.get('type') not in ALLOWED:
-        raise ValueError(f"Tipo de mensagem desconhecido: {msg.get('type')}")
+        raise ProtocolError(f"Tipo de mensagem desconhecido: {msg.get('type')}")
+
     return msg
 
 
 # ── receive helper ────────────────────────────────────────────
 
 def receive_message(sock) -> dict | None:
-    """
-    Lê uma mensagem JSON delimitada por \\n do socket.
-    Usa bytearray para evitar O(n²).
-    Aborta se exceder MAX_HEADER bytes — proteção contra peer malicioso.
-    Retorna None se a conexão fechar.
-    """
     import socket as _socket
     buf = bytearray()
     try:
@@ -80,7 +89,13 @@ def receive_message(sock) -> dict | None:
                 return parse(buf.decode('utf-8').strip())
             buf += char
 
-        raise ValueError(f"Header excedeu {MAX_HEADER} bytes — conexão abortada.")
+        raise ProtocolError(f"Header excedeu {MAX_HEADER} bytes — conexão abortada.")
 
-    except (ConnectionResetError, _socket.timeout):
+    except (ConnectionResetError, _socket.timeout, BrokenPipeError):
+        return None
+    except ProtocolError as e:
+        logger.error(f"Erro de protocolo: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Erro inesperado ao receber mensagem: {e}")
         return None

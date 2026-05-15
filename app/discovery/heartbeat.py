@@ -63,9 +63,18 @@ class HeartbeatService:
         ).start()
 
     def _renew_peer_ttls(self):
-        """
-        Renova TTL de todos os peers ativos no storage.
-        Chamado pelo super nó a cada ciclo de heartbeat.
-        """
-        from storage.dict_store import refresh_all_ttls
-        refresh_all_ttls()
+        from storage.dict_store import get_all_peers, remove_peer
+
+        peers = get_all_peers()
+        for peer in peers:
+            if peer['peer_name'] == self.state.peer_name:
+                continue
+
+            alive = client.heartbeat(peer['ip_address'], peer['port'])
+            if not alive:
+                logger.warning(f"Peer '{peer['peer_name']}' parado ou inacessível. Removendo.")
+                remove_peer(peer['peer_name'])
+                self.state.remove_known_peer(peer['peer_name'])
+            else:
+                from storage.dict_store import register_peer
+                register_peer(peer['peer_name'], peer['ip_address'], peer['port'], peer.get('uptime', 0))

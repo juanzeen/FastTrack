@@ -12,14 +12,6 @@ def start_election(state) -> bool:
     Algoritmo Bully baseado em uptime.
     Peer com maior uptime vira líder — quem está há mais tempo
     online conhece mais a rede.
-
-    Fluxo:
-    1. Marca eleição em andamento
-    2. Envia ELECTION para todos com uptime maior
-    3. Se alguém responder OK → esse peer vai assumir, aguarda LEADER
-    4. Se ninguém responder → se declara líder e notifica todos
-
-    Retorna True se este peer se tornou líder.
     """
     if state.election_in_progress:
         logger.info("Eleição já em andamento, aguardando...")
@@ -31,11 +23,9 @@ def start_election(state) -> bool:
     peers_acima = state.get_peers_with_higher_uptime()
 
     if not peers_acima:
-        # ninguém com uptime maior → sou o líder
         _declare_leader(state)
         return True
 
-    # envia ELECTION para todos com uptime maior
     got_ok = False
     for peer in peers_acima:
         ok = client.send_election(
@@ -50,42 +40,34 @@ def start_election(state) -> bool:
             break
 
     if got_ok:
-        # aguarda o LEADER chegar via server.py
-        # se demorar demais, inicia nova eleição
         deadline = time.time() + config.ELECTION_TIMEOUT * 2
         while time.time() < deadline:
             if not state.election_in_progress:
-                return False  # LEADER chegou, eleição resolvida
+                return False
             time.sleep(0.5)
 
-        # timeout — ninguém se declarou líder, assumimos
         logger.warning("Timeout aguardando LEADER. Assumindo liderança.")
         _declare_leader(state)
         return True
 
     else:
-        # nenhum peer com uptime maior respondeu → sou o líder
         _declare_leader(state)
         return True
 
 
 def _declare_leader(state):
-    """Declara este peer como líder e notifica toda a rede."""
     logger.info(f"'{state.peer_name}' se declara líder (uptime: {state.uptime:.1f}s).")
 
     state.is_leader            = True
     state.election_in_progress = False
     state.current_leader       = state.to_dict()
 
-    # inicializa storage local como super nó
     from storage.dict_store import init_store, register_peer, register_peer_files
     from files.manager import scan_shared_folder
-    
+
     init_store()
-    # Registra a si mesmo no dict_store
     register_peer(state.peer_name, state.ip_address, state.port, state.uptime)
-    
-    # Registra os próprios arquivos locais
+
     files = scan_shared_folder()
     to_announce = [
         {'filename': f['filename'],
@@ -95,7 +77,6 @@ def _declare_leader(state):
     ]
     register_peer_files(state.peer_name, to_announce)
 
-    # notifica todos os peers conhecidos
     client.broadcast_leader(
         state.known_peers,
         state.peer_name,
@@ -120,7 +101,7 @@ def _rebuild_index(state):
     for peer in peers:
         if peer['peer_name'] == state.peer_name:
             continue
-            
+
         files = client.request_file_index(peer['ip_address'], peer['port'])
         # É vital registrar o peer ANTES dos arquivos para que o TTL seja válido
         register_peer(
