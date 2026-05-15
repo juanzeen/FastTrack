@@ -205,7 +205,7 @@ def _cmd_search(state, args):
     print(f"  {'-'*80}")
     for r in results:
         size  = _format_size(r.get('size_bytes', 0))
-        chk   = r['checksum'][:16] + '...'
+        chk   = r['checksum']
         peers = ', '.join(p['peer_name'] for p in r.get('peers', []))
         print(f"  {r['filename']:<30} {size:<12} {chk:<20} {peers}")
     print()
