@@ -1,16 +1,11 @@
-"""
-In-memory storage using Python dicts.
-Thread-safe operations via locks.
-Replaces Redis for peer and file tracking.
-"""
-
 import threading
 import logging
 import time
+from exceptions import StorageError
 
 logger = logging.getLogger(__name__)
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 # Storage structures
 _peers: dict = {}          # peer_name -> {ip_address, port, uptime, last_update}
@@ -23,21 +18,23 @@ PEER_TTL = 30  # seconds — peers expire after this
 
 
 def init_store():
-    """Initialize storage. Called when peer becomes leader."""
     global _peers, _peer_files, _file_meta, _file_peers
-    with _lock:
-        _peers.clear()
-        _peer_files.clear()
-        _file_meta.clear()
-        _file_peers.clear()
-    logger.info("In-memory store initialized.")
-    return True
+    try:
+        with _lock:
+            _peers.clear()
+            _peer_files.clear()
+            _file_meta.clear()
+            _file_peers.clear()
+        logger.info("In-memory store initialized.")
+        return True
+    except Exception as e:
+        logger.error(f"Falha ao inicializar armazenamento: {e}")
+        return False
 
 
 # ── peers ─────────────────────────────────────────────────────
 
 def register_peer(peer_name: str, ip_address: str, port: int, uptime: float) -> bool:
-    """Register or update a peer."""
     try:
         with _lock:
             _peers[peer_name] = {
@@ -53,18 +50,16 @@ def register_peer(peer_name: str, ip_address: str, port: int, uptime: float) -> 
 
 
 def get_peer_info(peer_name: str) -> dict | None:
-    """Get peer info if not expired."""
     try:
         with _lock:
             if peer_name not in _peers:
                 return None
-            
+
             peer = _peers[peer_name]
             if time.time() - peer['last_update'] > PEER_TTL:
-                # Peer expired
                 del _peers[peer_name]
                 return None
-            
+
             return {
                 'peer_name': peer_name,
                 'ip_address': peer['ip_address'],
@@ -85,12 +80,10 @@ def get_all_peers() -> list[dict]:
                 name for name, peer in _peers.items()
                 if now - peer['last_update'] > PEER_TTL
             ]
-            
-            # Remove expired
+
             for name in expired:
                 del _peers[name]
-            
-            # Return active peers
+
             return [
                 {
                     'peer_name': name,
@@ -111,8 +104,7 @@ def remove_peer(peer_name: str) -> bool:
         with _lock:
             if peer_name not in _peers:
                 return True
-            
-            # Remove peer's files references
+
             if peer_name in _peer_files:
                 checksums = _peer_files[peer_name]
                 for checksum in checksums:
@@ -120,12 +112,12 @@ def remove_peer(peer_name: str) -> bool:
                         _file_peers[checksum].discard(peer_name)
                         # If no peers have this file, remove file meta
                         if not _file_peers[checksum]:
-                            del _file_peers[checksum]
-                            if checksum in _file_meta:
-                                del _file_meta[checksum]
+                            if checksum in _file_peers: del _file_peers[checksum]
+                            if checksum in _file_meta: del _file_meta[checksum]
                 del _peer_files[peer_name]
-            
-            del _peers[peer_name]
+
+            if peer_name in _peers:
+                del _peers[peer_name]
         return True
     except Exception as e:
         logger.error(f"Erro ao remover peer '{peer_name}': {e}")
@@ -133,7 +125,6 @@ def remove_peer(peer_name: str) -> bool:
 
 
 def refresh_all_ttls():
-    """Refresh TTLs by updating last_update timestamp for all peers."""
     try:
         with _lock:
             now = time.time()
@@ -146,10 +137,6 @@ def refresh_all_ttls():
 # ── arquivos ──────────────────────────────────────────────────
 
 def register_peer_files(peer_name: str, files: list[dict]) -> bool:
-    """
-    Register files announced by a peer.
-    Does diff to remove checksums the peer no longer has.
-    """
     try:
         with _lock:
             new_checksums = {f['checksum'] for f in files}
@@ -161,9 +148,8 @@ def register_peer_files(peer_name: str, files: list[dict]) -> bool:
                 if checksum in _file_peers:
                     _file_peers[checksum].discard(peer_name)
                     if not _file_peers[checksum]:
-                        del _file_peers[checksum]
-                        if checksum in _file_meta:
-                            del _file_meta[checksum]
+                        if checksum in _file_peers: del _file_peers[checksum]
+                        if checksum in _file_meta: del _file_meta[checksum]
 
             # Add new files
             _peer_files[peer_name] = new_checksums
@@ -189,15 +175,15 @@ def get_peers_with_file(checksum: str) -> list[dict]:
         with _lock:
             if checksum not in _file_peers:
                 return []
-            
+
             peer_names = _file_peers[checksum]
             peers = []
-            
+
             for peer_name in peer_names:
                 peer = get_peer_info(peer_name)
                 if peer:
                     peers.append(peer)
-            
+
             return peers
     except Exception as e:
         logger.error(f"Erro ao buscar peers com arquivo '{checksum}': {e}")
@@ -227,8 +213,8 @@ def search_file_by_name(query: str) -> list[dict]:
                             peer = get_peer_info(peer_name)
                             if peer:
                                 peers.append(peer)
-                    
-                    if peers:  # Only return if at least one peer has it
+
+                    if peers:
                         results.append({
                             'checksum': checksum,
                             'filename': meta['filename'],
@@ -247,7 +233,7 @@ def get_peer_files(peer_name: str) -> list[dict]:
         with _lock:
             if peer_name not in _peer_files:
                 return []
-            
+
             files = []
             for checksum in _peer_files[peer_name]:
                 if checksum in _file_meta:

@@ -3,6 +3,7 @@ import os
 import config
 from network import client
 from files.manager import scan_shared_folder
+from exceptions import FastTrackError
 
 logger = logging.getLogger(__name__)
 
@@ -37,37 +38,43 @@ def run(state):
         if not raw:
             continue
 
-        parts   = raw.split()
-        command = parts[0].lower()
-        args    = parts[1:]
+        try:
+            parts   = raw.split()
+            command = parts[0].lower()
+            args    = parts[1:]
 
-        if command == 'help':
-            _cmd_help()
+            if command == 'help':
+                _cmd_help()
 
-        elif command == 'peers':
-            _cmd_peers(state)
+            elif command == 'peers':
+                _cmd_peers(state)
 
-        elif command == 'files':
-            _cmd_files(state, args)
+            elif command == 'files':
+                _cmd_files(state, args)
 
-        elif command == 'search':
-            _cmd_search(state, args)
+            elif command == 'search':
+                _cmd_search(state, args)
 
-        elif command == 'download':
-            _cmd_download(state, args)
+            elif command == 'download':
+                _cmd_download(state, args)
 
-        elif command == 'myfiles':
-            _cmd_myfiles()
+            elif command == 'myfiles':
+                _cmd_myfiles()
 
-        elif command == 'status':
-            _cmd_status(state)
+            elif command == 'status':
+                _cmd_status(state)
 
-        elif command == 'exit' or command == 'quit':
-            print("Saindo da rede...")
-            break
+            elif command == 'exit' or command == 'quit':
+                print("Saindo da rede...")
+                break
 
-        else:
-            print(f"Comando desconhecido: '{command}'. Digite 'help'.")
+            else:
+                print(f"Comando desconhecido: '{command}'. Digite 'help'.")
+        except FastTrackError as e:
+            print(f"Erro na operação: {e}")
+        except Exception as e:
+            print(f"Ocorreu um erro inesperado: {e}")
+            logger.exception("Erro não tratado na CLI")
 
 
 def _cmd_help():
@@ -126,17 +133,31 @@ def _cmd_files(state, args):
         return
 
     from network import protocol as proto
+    files = []
     if args:
         peer_name = args[0]
-        resp = client.send_and_receive(
-            leader['ip_address'],
-            leader['port'],
-            proto.build('FILE_INDEX', peer_name=peer_name)
-        )
-        files = resp.get('files', []) if resp else []
+        if state.is_leader and peer_name == state.peer_name:
+            files_raw = scan_shared_folder()
+            files = [
+                {'filename': f['filename'],
+                 'size_bytes': f['size_bytes'],
+                 'checksum': f['checksum']}
+                for f in files_raw
+            ]
+        elif state.is_leader:
+            from storage.dict_store import get_peer_files
+            files = get_peer_files(peer_name)
+        else:
+            resp = client.send_and_receive(
+                leader['ip_address'],
+                leader['port'],
+                proto.build(proto.FILE_INDEX, peer_name=peer_name)
+            )
+            if resp and resp.get('type') == proto.FILE_INDEX_RESP:
+                files = resp.get('files', [])
     else:
-        from storage.dict_store import search_file_by_name
         if state.is_leader:
+            from storage.dict_store import search_file_by_name
             files = search_file_by_name('')
         else:
             print("Use 'search <nome>' para buscar arquivos na rede.")
@@ -161,6 +182,7 @@ def _cmd_search(state, args):
         print("Sem líder conhecido no momento.")
         return
 
+    results = []
     if state.is_leader:
         from storage.dict_store import search_file_by_name
         results = search_file_by_name(query)
@@ -169,9 +191,10 @@ def _cmd_search(state, args):
         resp = client.send_and_receive(
             leader['ip_address'],
             leader['port'],
-            proto.build('SEARCH_FILES_REQUEST', query=query)
+            proto.build(proto.SEARCH_FILES_REQUEST, query=query)
         )
-        results = resp.get('results', []) if resp else []
+        if resp and resp.get('type') == proto.SEARCH_FILES_RESPONSE:
+            results = resp.get('results', [])
 
     if not results:
         print(f"Nenhum arquivo encontrado para '{query}'.")
@@ -182,7 +205,7 @@ def _cmd_search(state, args):
     print(f"  {'-'*80}")
     for r in results:
         size  = _format_size(r.get('size_bytes', 0))
-        chk   = r['checksum'][:16] + '...'
+        chk   = r['checksum']
         peers = ', '.join(p['peer_name'] for p in r.get('peers', []))
         print(f"  {r['filename']:<30} {size:<12} {chk:<20} {peers}")
     print()
@@ -202,6 +225,7 @@ def _cmd_download(state, args):
         print("Sem líder conhecido.")
         return
 
+    sources = []
     if state.is_leader:
         from storage.dict_store import get_peers_with_file
         sources = get_peers_with_file(checksum)
@@ -210,9 +234,10 @@ def _cmd_download(state, args):
         resp = client.send_and_receive(
             leader['ip_address'],
             leader['port'],
-            proto.build('GET_FILE_SOURCES_REQUEST', checksum=checksum)
+            proto.build(proto.GET_FILE_SOURCES_REQUEST, checksum=checksum)
         )
-        sources = resp.get('sources', []) if resp else []
+        if resp and resp.get('type') == proto.GET_FILE_SOURCES_RESPONSE:
+            sources = resp.get('sources', [])
 
     if not sources:
         print(f"Nenhum peer tem o arquivo com checksum '{checksum[:16]}...'")
@@ -243,17 +268,20 @@ def _cmd_download(state, args):
 
 
 def _cmd_myfiles():
-    arquivos = scan_shared_folder()
-    if not arquivos:
-        print(f"Nenhum arquivo em '{config.SHARED_FOLDER}'.")
-        return
+    try:
+        arquivos = scan_shared_folder()
+        if not arquivos:
+            print(f"Nenhum arquivo em '{config.SHARED_FOLDER}'.")
+            return
 
-    print(f"\n  {'NOME':<30} {'TAMANHO':<12} CHECKSUM")
-    print(f"  {'-'*70}")
-    for f in arquivos:
-        size = _format_size(f['size_bytes'])
-        print(f"  {f['filename']:<30} {size:<12} {f['checksum']}")
-    print()
+        print(f"\n  {'NOME':<30} {'TAMANHO':<12} CHECKSUM")
+        print(f"  {'-'*70}")
+        for f in arquivos:
+            size = _format_size(f['size_bytes'])
+            print(f"  {f['filename']:<30} {size:<12} {f['checksum']}")
+        print()
+    except Exception as e:
+        print(f"Erro ao listar arquivos locais: {e}")
 
 
 def _cmd_status(state):

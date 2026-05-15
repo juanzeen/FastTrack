@@ -11,23 +11,19 @@ class PeerState:
     """
     Estado compartilhado do peer em memória.
     Thread-safe via lock.
-    Centraliza tudo que o sistema precisa saber sobre si mesmo e a rede.
     """
 
     def __init__(self):
         self._lock = threading.Lock()
 
-        # identidade
         self.peer_name  = config.PEER_NAME
         self.ip_address = self._get_local_ip()
         self.port       = config.PEER_PORT
         self.started_at = time.time()
 
-        # rede
-        self._known_peers: list[dict] = []   # peers conhecidos em memória
+        self._known_peers: list[dict] = []
         self._current_leader: dict | None = None
 
-        # flags
         self.is_leader             = False
         self.election_in_progress  = False
 
@@ -38,7 +34,6 @@ class PeerState:
         """
         Tempo em segundos desde que o peer iniciou.
         Usado como critério de eleição — maior uptime vira líder.
-        Peer com mais tempo online conhece mais a rede.
         """
         return time.time() - self.started_at
 
@@ -62,17 +57,12 @@ class PeerState:
             return list(self._known_peers)
 
     def add_known_peer(self, peer: dict):
-        """Adiciona peer à lista local. Ignora se já existir pelo nome."""
         with self._lock:
             names = {p['peer_name'] for p in self._known_peers}
             if peer['peer_name'] not in names:
                 self._known_peers.append(peer)
 
     def update_known_peers(self, peers: list[dict]):
-        """
-        Atualiza lista de peers conhecidos com a lista recebida do super nó.
-        Faz merge — não substitui peers que já existem localmente.
-        """
         with self._lock:
             names = {p['peer_name'] for p in self._known_peers}
             for peer in peers:
@@ -87,7 +77,6 @@ class PeerState:
             ]
 
     def get_peers_with_higher_uptime(self) -> list[dict]:
-        """Retorna peers com uptime maior que o nosso. Usado na eleição."""
         with self._lock:
             return [
                 p for p in self._known_peers
