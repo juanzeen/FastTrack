@@ -79,7 +79,7 @@ class PeerServer:
                 self._handle_announce(conn, msg)
 
             elif t == proto.FILE_INDEX:
-                self._handle_file_index(conn)
+                self._handle_file_index(conn, msg)
 
             elif t == proto.HEARTBEAT:
                 conn.sendall(proto.build(proto.HEARTBEAT_ACK))
@@ -95,6 +95,12 @@ class PeerServer:
 
             elif t == proto.GET_PEERS:
                 self._handle_get_peers(conn)
+
+            elif t == proto.SEARCH_FILES_REQUEST:
+                self._handle_search(conn, msg)
+
+            elif t == proto.GET_FILE_SOURCES_REQUEST:
+                self._handle_get_sources(conn, msg)
 
             else:
                 conn.sendall(proto.build(proto.ERROR, reason='unsupported_message_type'))
@@ -145,7 +151,7 @@ class PeerServer:
             'port':       port,
             'uptime':     uptime
         })
-        
+
         # Adiciona o novo peer à bootstrap list
         config.add_to_bootstrap(ip_address, port)
 
@@ -154,7 +160,7 @@ class PeerServer:
         peers = get_all_peers()
         conn.sendall(proto.build(proto.PEER_LIST, peers=peers))
 
-    def _handle_file_index(self, conn):
+    def _handle_file_index(self, conn, msg):
         files = scan_shared_folder()
         to_announce = [
             {'filename': f['filename'],
@@ -243,3 +249,33 @@ class PeerServer:
                     conn.sendall(chunk)
         except OSError as e:
             logger.error(f"Erro ao enviar arquivo '{arquivo['filename']}': {e}")
+
+    def _handle_search(self, conn, msg):
+        """
+        Busca arquivos na rede. Só o líder processa.
+        """
+        if not self.state.is_leader:
+            conn.sendall(proto.build(proto.ERROR, reason='not_a_leader'))
+            return
+
+        query = msg.get('query', '')
+        from storage.dict_store import search_file_by_name
+        results = search_file_by_name(query)
+        conn.sendall(proto.build(proto.SEARCH_FILES_RESPONSE, results=results))
+
+    def _handle_get_sources(self, conn, msg):
+        """
+        Busca peers que possuem um arquivo pelo checksum. Só o líder processa.
+        """
+        if not self.state.is_leader:
+            conn.sendall(proto.build(proto.ERROR, reason='not_a_leader'))
+            return
+
+        checksum = msg.get('checksum')
+        if not checksum:
+            conn.sendall(proto.build(proto.ERROR, reason='missing_checksum'))
+            return
+
+        from storage.dict_store import get_peers_with_file
+        sources = get_peers_with_file(checksum)
+        conn.sendall(proto.build(proto.GET_FILE_SOURCES_RESPONSE, sources=sources))

@@ -78,10 +78,22 @@ def _declare_leader(state):
     state.current_leader       = state.to_dict()
 
     # inicializa storage local como super nó
-    from storage.dict_store import init_store, register_peer
+    from storage.dict_store import init_store, register_peer, register_peer_files
+    from files.manager import scan_shared_folder
+    
     init_store()
     # Registra a si mesmo no dict_store
     register_peer(state.peer_name, state.ip_address, state.port, state.uptime)
+    
+    # Registra os próprios arquivos locais
+    files = scan_shared_folder()
+    to_announce = [
+        {'filename': f['filename'],
+         'size_bytes': f['size_bytes'],
+         'checksum': f['checksum']}
+        for f in files
+    ]
+    register_peer_files(state.peer_name, to_announce)
 
     # notifica todos os peers conhecidos
     client.broadcast_leader(

@@ -131,7 +131,7 @@ def _cmd_files(state, args):
         resp = client.send_and_receive(
             leader['ip_address'],
             leader['port'],
-            proto.build('FILE_INDEX', peer_name=peer_name)
+            proto.build(proto.FILE_INDEX, peer_name=peer_name)
         )
         files = resp.get('files', []) if resp else []
     else:
@@ -169,11 +169,14 @@ def _cmd_search(state, args):
         resp = client.send_and_receive(
             leader['ip_address'],
             leader['port'],
-            proto.build('SEARCH_FILES_REQUEST', query=query)
+            proto.build(proto.SEARCH_FILES_REQUEST, query=query)
         )
-        results = resp.get('results', []) if resp else []
+        if resp and resp.get('type') == proto.SEARCH_FILES_RESPONSE:
+            results = resp.get('results', [])
+        else:
+            results = []
 
-    if not results:
+    if not results or results == []:
         print(f"Nenhum arquivo encontrado para '{query}'.")
         return
 
@@ -182,7 +185,7 @@ def _cmd_search(state, args):
     print(f"  {'-'*80}")
     for r in results:
         size  = _format_size(r.get('size_bytes', 0))
-        chk   = r['checksum'][:16] + '...'
+        chk   = r['checksum']
         peers = ', '.join(p['peer_name'] for p in r.get('peers', []))
         print(f"  {r['filename']:<30} {size:<12} {chk:<20} {peers}")
     print()
@@ -210,9 +213,12 @@ def _cmd_download(state, args):
         resp = client.send_and_receive(
             leader['ip_address'],
             leader['port'],
-            proto.build('GET_FILE_SOURCES_REQUEST', checksum=checksum)
+            proto.build(proto.GET_FILE_SOURCES_REQUEST, checksum=checksum)
         )
-        sources = resp.get('sources', []) if resp else []
+        if resp and resp.get('type') == proto.GET_FILE_SOURCES_RESPONSE:
+            sources = resp.get('sources', [])
+        else:
+            sources = []
 
     if not sources:
         print(f"Nenhum peer tem o arquivo com checksum '{checksum[:16]}...'")

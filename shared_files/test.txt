@@ -1,0 +1,1 @@
+estou escrevendo somente para que esse arquivo passe a ter um checksum que de fato seja um valor e o tamanho do arquivo seja maior do que zero.

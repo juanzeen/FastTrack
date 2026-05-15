@@ -146,9 +146,22 @@ def _announce_to_leader(state, leader: dict) -> bool:
 
 
 def _become_first_leader(state):
-    from storage.dict_store import init_store, register_peer
+    from storage.dict_store import init_store, register_peer, register_peer_files
+    from files.manager import scan_shared_folder
+    
     init_store()
     register_peer(state.peer_name, state.ip_address, state.port, state.uptime)
+    
+    # Registra os arquivos locais do próprio líder no store
+    files = scan_shared_folder()
+    to_announce = [
+        {'filename': f['filename'],
+         'size_bytes': f['size_bytes'],
+         'checksum': f['checksum']}
+        for f in files
+    ]
+    register_peer_files(state.peer_name, to_announce)
+    
     state.is_leader            = True
     state.election_in_progress = False
     state.current_leader       = state.to_dict()

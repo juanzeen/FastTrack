@@ -10,7 +10,7 @@ import time
 
 logger = logging.getLogger(__name__)
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 # Storage structures
 _peers: dict = {}          # peer_name -> {ip_address, port, uptime, last_update}
