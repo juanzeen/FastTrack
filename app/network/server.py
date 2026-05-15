@@ -161,14 +161,33 @@ class PeerServer:
         conn.sendall(proto.build(proto.PEER_LIST, peers=peers))
 
     def _handle_file_index(self, conn, msg):
-        files = scan_shared_folder()
-        to_announce = [
-            {'filename': f['filename'],
-             'size_bytes': f['size_bytes'],
-             'checksum': f['checksum']}
-            for f in files
-        ]
-        conn.sendall(proto.build(proto.FILE_INDEX_RESP, files=to_announce))
+        peer_name = msg.get('peer_name')
+        
+        # Se um peer_name foi especificado e eu sou o líder, busco no índice global
+        if peer_name and self.state.is_leader:
+            # Se o peer_name for o meu próprio, faço scan local
+            if peer_name == self.state.peer_name:
+                files_raw = scan_shared_folder()
+                files = [
+                    {'filename': f['filename'],
+                     'size_bytes': f['size_bytes'],
+                     'checksum': f['checksum']}
+                    for f in files_raw
+                ]
+            else:
+                from storage.dict_store import get_peer_files
+                files = get_peer_files(peer_name)
+        else:
+            # Caso contrário (ou se não sou líder), respondo com meus próprios arquivos
+            files_raw = scan_shared_folder()
+            files = [
+                {'filename': f['filename'],
+                 'size_bytes': f['size_bytes'],
+                 'checksum': f['checksum']}
+                for f in files_raw
+            ]
+            
+        conn.sendall(proto.build(proto.FILE_INDEX_RESP, files=files))
 
     def _handle_get_peers(self, conn):
         peers = []

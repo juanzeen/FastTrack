@@ -118,15 +118,21 @@ def _rebuild_index(state):
     peers = state.known_peers
 
     for peer in peers:
+        if peer['peer_name'] == state.peer_name:
+            continue
+            
         files = client.request_file_index(peer['ip_address'], peer['port'])
+        # É vital registrar o peer ANTES dos arquivos para que o TTL seja válido
+        register_peer(
+            peer['peer_name'],
+            peer['ip_address'],
+            peer['port'],
+            peer.get('uptime', 0)
+        )
         if files:
-            register_peer(
-                peer['peer_name'],
-                peer['ip_address'],
-                peer['port'],
-                peer.get('uptime', 0)
-            )
             register_peer_files(peer['peer_name'], files)
             logger.info(f"Índice de '{peer['peer_name']}' reconstruído ({len(files)} arquivo(s)).")
+        else:
+            logger.warning(f"Peer '{peer['peer_name']}' não retornou arquivos ou está offline.")
 
     logger.info("Reconstrução do índice concluída.")

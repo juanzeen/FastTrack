@@ -128,15 +128,31 @@ def _cmd_files(state, args):
     from network import protocol as proto
     if args:
         peer_name = args[0]
-        resp = client.send_and_receive(
-            leader['ip_address'],
-            leader['port'],
-            proto.build(proto.FILE_INDEX, peer_name=peer_name)
-        )
-        files = resp.get('files', []) if resp else []
+        # Se eu sou o líder e peço meus próprios arquivos
+        if state.is_leader and peer_name == state.peer_name:
+            files_raw = scan_shared_folder()
+            files = [
+                {'filename': f['filename'],
+                 'size_bytes': f['size_bytes'],
+                 'checksum': f['checksum']}
+                for f in files_raw
+            ]
+        # Se eu sou o líder e peço de outro peer
+        elif state.is_leader:
+            from storage.dict_store import get_peer_files
+            files = get_peer_files(peer_name)
+        # Se sou um peer comum pedindo de qualquer um (via líder)
+        else:
+            resp = client.send_and_receive(
+                leader['ip_address'],
+                leader['port'],
+                proto.build(proto.FILE_INDEX, peer_name=peer_name)
+            )
+            files = resp.get('files', []) if resp else []
     else:
-        from storage.dict_store import search_file_by_name
+        # Listagem global (apenas se for líder)
         if state.is_leader:
+            from storage.dict_store import search_file_by_name
             files = search_file_by_name('')
         else:
             print("Use 'search <nome>' para buscar arquivos na rede.")
